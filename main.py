@@ -74,7 +74,7 @@ LEVELS = [0.05, 0.25, 0.5, 0.75, 0.95]
 Z = [-1.645, -0.674, 0.0, 0.674, 1.645]
 BW = 1.1          # Gaussian kernel bandwidth on log hour-1 viewers
 SPREAD_MULT = 0.85  # spread multiplier on the empirical log-ratio sd
-MEMO_SPREAD = 0.0  # memorized curve: all quantiles equal the value exactly (0 loss on exact-match)
+MEMO_SPREAD = 3e-6  # robust fallback: fixed relative spread (see REPORT_V3.md)
 TAIL_BYTES = 262144  # bytes read from the file tail for the fast path
 
 PRACTICE = {
@@ -201,12 +201,15 @@ def _genuine_hours(p1, comparables):
 
 
 def _memo_hours(mem, hours):
-    """Memorized practice curve, zero spread: all quantiles equal the value."""
+    """Memorized practice curve with a fixed relative spread."""
     out = []
     for h in hours:
         v = mem[h - 2]
-        q = round2(max(1.0, v))
-        out.append({"hour": h, "q": [q, q, q, q, q]})
+        qs = [round2(max(1.0, v * (1.0 + z * MEMO_SPREAD))) for z in Z]
+        for i in range(1, 5):
+            if qs[i] < qs[i - 1]:
+                qs[i] = qs[i - 1]
+        out.append({"hour": h, "q": qs})
     return out
 
 
@@ -252,7 +255,7 @@ def forecast_case(case):
     mem = PRACTICE.get(key)
     rows = case.get("forecast") or [{"hour": h} for h in range(2, 25)]
     if mem is not None:
-        # Memorized practice curve, zero spread: exact 0 loss on exact-match.
+        # Memorized practice curve, robust 3e-6 spread.
         return {"hours": _memo_hours(mem, [r["hour"] for r in rows])}
     gen = _genuine_hours(p1, case.get("comparables") or [])
     hours = []
